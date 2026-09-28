@@ -24,9 +24,34 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-// 🔒 Main Dashboard
+// Helper function to load metadata safely
+function getMetadata(filePath) {
+    let metadata = {
+        dateTime: 'N/A',
+        botNumber: 'Unknown Bot',
+        senderName: 'N/A',
+        senderNumber: 'N/A',
+        replierName: 'N/A',
+        replierNumber: 'N/A',
+        chatType: 'N/A',
+        groupName: 'N/A',
+        caption: 'N/A',
+        userReply: 'N/A'
+    };
+
+    if (fs.existsSync(filePath)) {
+        try {
+            const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            metadata = { ...metadata, ...parsed };
+        } catch(e) {}
+    }
+    return metadata;
+}
+
+// 🔒 Main Dashboard Route
 app.get('/', (req, res) => {
     const userPin = req.query.pin;
+    const selectedBot = req.query.bot; // Filter by selected bot number
 
     if (userPin !== ACCESS_PIN) {
         return res.send(`
@@ -56,62 +81,120 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let filesHtml = '';
+    let bodyContentHtml = '';
+    let botTabsHtml = '';
+
     try {
         const allFiles = fs.readdirSync(backupsDir);
-        const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
+        // Exclude JSON metadata files
+        const rawMediaFiles = allFiles.filter(f => !f.endsWith('.json'));
 
-        if (mediaFiles.length === 0) {
-            filesHtml = '<p style="color: #94a3b8; grid-column: 1/-1; text-align: center;">No stored media found.</p>';
-        } else {
-            filesHtml = mediaFiles.map(file => {
-                const isVideo = file.endsWith('.mp4');
-                const fileUrl = '/backups/' + file;
-                const metaFileName = file + '.json';
-                const metaFilePath = path.join(backupsDir, metaFileName);
-                
-                let metadata = {
-                    dateTime: 'N/A',
-                    botNumber: 'N/A',
-                    senderName: 'N/A',
-                    senderNumber: 'N/A',
-                    replierName: 'N/A',
-                    replierNumber: 'N/A',
-                    chatType: 'N/A',
-                    groupName: 'N/A',
-                    caption: 'N/A',
-                    userReply: 'N/A'
-                };
+        // Attach stat (mtime) and metadata to sort accurately from newest to oldest
+        let mediaItems = rawMediaFiles.map(file => {
+            const filePath = path.join(backupsDir, file);
+            const metaPath = filePath + '.json';
+            const stats = fs.statSync(filePath);
+            const metadata = getMetadata(metaPath);
 
-                if (fs.existsSync(metaFilePath)) {
-                    try {
-                        metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-                    } catch(e) {}
-                }
+            return {
+                fileName: file,
+                filePath: filePath,
+                mtime: stats.mtimeMs,
+                metadata: metadata
+            };
+        });
 
-                const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
-                const mediaTag = isVideo 
-                    ? '<video src="' + fileUrl + '" controls preload="metadata"></video>'
-                    : '<img src="' + fileUrl + '" loading="lazy" />';
+        // Sort: Newest to Oldest
+        mediaItems.sort((a, b) => b.mtime - a.mtime);
 
-                return '<div class="media-card" id="card-' + file + '">' +
-                            '<div class="card-checkbox-wrapper">' +
-                                '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
-                            '</div>' +
-                            mediaTag +
-                            '<div class="card-info">' +
-                                '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
-                                '<form method="POST" action="/delete" style="margin: 0;">' +
-                                    '<input type="hidden" name="pin" value="' + userPin + '" />' +
-                                    '<input type="hidden" name="fileNames" value="' + file + '" />' +
-                                    '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
-                                '</form>' +
-                            '</div>' +
-                        '</div>';
-            }).join('');
+        // Group media items by Bot Number
+        const botGroups = {};
+        mediaItems.forEach(item => {
+            const bNum = item.metadata.botNumber || 'Unknown Bot';
+            if (!botGroups[bNum]) botGroups[bNum] = [];
+            botGroups[bNum].push(item);
+        });
+
+        const botNumbers = Object.keys(botGroups);
+
+        // Build navigation tabs for bots
+        botTabsHtml = `
+            <a href="/?pin=${encodeURIComponent(userPin)}" class="nav-tab ${!selectedBot ? 'active' : ''}">🤖 All Bots (${botNumbers.length})</a>
+            ${botNumbers.map(bot => `
+                <a href="/?pin=${encodeURIComponent(userPin)}&bot=${encodeURIComponent(bot)}" class="nav-tab ${selectedBot === bot ? 'active' : ''}">
+                    📱 ${bot} (${botGroups[bot].length})
+                </a>
+            `).join('')}
+        `;
+
+        // Case 1: Overview mode (No specific bot selected) -> Display Bot Folders
+        if (!selectedBot) {
+            if (botNumbers.length === 0) {
+                bodyContentHtml = '<p style="color: #94a3b8; text-align: center; grid-column: 1/-1;">No bot uploads found.</p>';
+            } else {
+                bodyContentHtml = '<div class="folder-grid">' + botNumbers.map(bot => {
+                    const count = botGroups[bot].length;
+                    const latestItem = botGroups[bot][0];
+                    const isVid = latestItem.fileName.endsWith('.mp4');
+                    const previewUrl = '/backups/' + latestItem.fileName;
+
+                    return `
+                        <a href="/?pin=${encodeURIComponent(userPin)}&bot=${encodeURIComponent(bot)}" class="folder-card">
+                            <div class="folder-preview">
+                                ${isVid 
+                                    ? `<video src="${previewUrl}#t=0.5" preload="metadata"></video>` 
+                                    : `<img src="${previewUrl}" loading="lazy" />`}
+                            </div>
+                            <div class="folder-details">
+                                <div class="folder-title">🤖 Bot: ${bot}</div>
+                                <div class="folder-count">📁 ${count} Media ${count === 1 ? 'file' : 'files'}</div>
+                            </div>
+                        </a>
+                    `;
+                }).join('') + '</div>';
+            }
+        } 
+        // Case 2: Specific Bot selected -> Display Media Grid for this Bot
+        else {
+            const filteredItems = botGroups[selectedBot] || [];
+
+            if (filteredItems.length === 0) {
+                bodyContentHtml = `<p style="color: #94a3b8; text-align: center; grid-column: 1/-1;">No media uploaded for bot: <b>${selectedBot}</b></p>`;
+            } else {
+                const mediaCardsHtml = filteredItems.map(item => {
+                    const file = item.fileName;
+                    const isVideo = file.endsWith('.mp4');
+                    const fileUrl = '/backups/' + file;
+                    const safeMeta = JSON.stringify(item.metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+                    const mediaTag = isVideo 
+                        ? '<video src="' + fileUrl + '" controls preload="metadata"></video>'
+                        : '<img src="' + fileUrl + '" loading="lazy" />';
+
+                    return `
+                        <div class="media-card" id="card-${file}">
+                            <div class="card-checkbox-wrapper">
+                                <input type="checkbox" name="selectedFiles" value="${file}" class="file-checkbox" onchange="toggleCardStyle(this, '${file}')" />
+                            </div>
+                            ${mediaTag}
+                            <div class="card-info">
+                                <button class="btn-info" data-meta='${safeMeta}' onclick="showInfo(this)">ℹ️ Info</button>
+                                <form method="POST" action="/delete" style="margin: 0;">
+                                    <input type="hidden" name="pin" value="${userPin}" />
+                                    <input type="hidden" name="fileNames" value="${file}" />
+                                    <button type="submit" class="btn-delete" onclick="return confirm('Delete this file permanently?')">🗑️ Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                bodyContentHtml = `<div class="grid">${mediaCardsHtml}</div>`;
+            }
         }
+
     } catch (e) {
-        filesHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
+        console.error(e);
+        bodyContentHtml = '<p style="color: #ef4444; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -125,6 +208,10 @@ app.get('/', (req, res) => {
                 .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #22c55e; padding-bottom: 15px; }
                 h1 { color: #22c55e; margin: 0 0 5px 0; }
                 
+                .bot-nav { max-width: 1200px; margin: 0 auto 15px auto; display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+                .nav-tab { background: #1e293b; color: #94a3b8; text-decoration: none; padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; border: 1px solid #334155; whitespace-nowrap: nowrap; }
+                .nav-tab.active, .nav-tab:hover { background: #22c55e; color: #0f172a; border-color: #22c55e; }
+
                 .toolbar { max-width: 1200px; margin: 0 auto 20px auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; background: #1e293b; padding: 12px 20px; border-radius: 8px; border: 1px solid #334155; align-items: center; }
                 .toolbar-group { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
                 .btn-tool { background: #334155; border: none; color: white; padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
@@ -134,6 +221,17 @@ app.get('/', (req, res) => {
                 .btn-delete-selected { background: #dc2626; }
                 .btn-delete-selected:hover { background: #b91c1c; }
 
+                /* Folder Grid View */
+                .folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+                .folder-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; text-decoration: none; color: white; transition: transform 0.2s, border-color 0.2s; display: flex; flex-direction: column; }
+                .folder-card:hover { transform: translateY(-3px); border-color: #22c55e; }
+                .folder-preview { height: 160px; background: #000; overflow: hidden; }
+                .folder-preview img, .folder-preview video { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+                .folder-details { padding: 15px; background: #1e293b; }
+                .folder-title { font-weight: bold; font-size: 16px; color: #22c55e; margin-bottom: 5px; }
+                .folder-count { font-size: 13px; color: #94a3b8; }
+
+                /* Media Grid View */
                 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
                 .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
@@ -159,23 +257,28 @@ app.get('/', (req, res) => {
                 <span style="color: #22c55e; font-size: 14px;">● ONLINE & SECURED</span>
             </div>
 
-            <div class="toolbar">
-                <div class="toolbar-group">
-                    <button class="btn-tool btn-mark-all" onclick="markAll(true)">✅ Mark All</button>
-                    <button class="btn-tool" onclick="markAll(false)">❌ Unmark All</button>
-                </div>
-                <div class="toolbar-group">
-                    <form id="batchDeleteForm" method="POST" action="/delete" onsubmit="return confirm('Delete all selected files permanently?')">
-                        <input type="hidden" name="pin" value="${userPin}" />
-                        <input type="hidden" name="fileNames" id="batchFileNames" value="" />
-                        <button type="submit" class="btn-tool btn-delete-selected">🗑️ Delete Selected</button>
-                    </form>
-                </div>
+            <div class="bot-nav">
+                ${botTabsHtml}
             </div>
 
-            <div class="grid">
-                ${filesHtml}
-            </div>
+            ${selectedBot ? `
+                <div class="toolbar">
+                    <div class="toolbar-group">
+                        <button class="btn-tool btn-mark-all" onclick="markAll(true)">✅ Mark All</button>
+                        <button class="btn-tool" onclick="markAll(false)">❌ Unmark All</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <form id="batchDeleteForm" method="POST" action="/delete" onsubmit="return confirm('Delete selected files permanently?')">
+                            <input type="hidden" name="pin" value="${userPin}" />
+                            <input type="hidden" name="bot" value="${selectedBot || ''}" />
+                            <input type="hidden" name="fileNames" id="batchFileNames" value="" />
+                            <button type="submit" class="btn-tool btn-delete-selected">🗑️ Delete Selected</button>
+                        </form>
+                    </div>
+                </div>
+            ` : ''}
+
+            ${bodyContentHtml}
 
             <div id="infoModal" class="modal-overlay">
                 <div class="modal-box">
@@ -194,10 +297,12 @@ app.get('/', (req, res) => {
             <script>
                 function toggleCardStyle(checkbox, fileName) {
                     const card = document.getElementById('card-' + fileName);
-                    if (checkbox.checked) {
-                        card.classList.add('marked');
-                    } else {
-                        card.classList.remove('marked');
+                    if (card) {
+                        if (checkbox.checked) {
+                            card.classList.add('marked');
+                        } else {
+                            card.classList.remove('marked');
+                        }
                     }
                     updateBatchInput();
                 }
@@ -207,10 +312,9 @@ app.get('/', (req, res) => {
                     checkboxes.forEach(cb => {
                         cb.checked = select;
                         const card = cb.closest('.media-card');
-                        if (select) {
-                            card.classList.add('marked');
-                        } else {
-                            card.classList.remove('marked');
+                        if (card) {
+                            if (select) card.classList.add('marked');
+                            else card.classList.remove('marked');
                         }
                     });
                     updateBatchInput();
@@ -219,16 +323,20 @@ app.get('/', (req, res) => {
                 function updateBatchInput() {
                     const checked = document.querySelectorAll('.file-checkbox:checked');
                     const filenames = Array.from(checked).map(cb => cb.value);
-                    document.getElementById('batchFileNames').value = filenames.join(',');
+                    const batchInput = document.getElementById('batchFileNames');
+                    if (batchInput) batchInput.value = filenames.join(',');
                 }
 
-                document.getElementById('batchDeleteForm').addEventListener('submit', function(e) {
-                    const batchVal = document.getElementById('batchFileNames').value;
-                    if (!batchVal) {
-                        e.preventDefault();
-                        alert('Please select at least one media item to delete.');
-                    }
-                });
+                const batchForm = document.getElementById('batchDeleteForm');
+                if (batchForm) {
+                    batchForm.addEventListener('submit', function(e) {
+                        const batchVal = document.getElementById('batchFileNames').value;
+                        if (!batchVal) {
+                            e.preventDefault();
+                            alert('Please select at least one media item to delete.');
+                        }
+                    });
+                }
 
                 function showInfo(btn) {
                     const data = JSON.parse(btn.getAttribute('data-meta'));
@@ -272,7 +380,7 @@ app.get('/', (req, res) => {
 
 // 🗑️ Delete Route
 app.post('/delete', (req, res) => {
-    const { pin, fileNames, fileName } = req.body;
+    const { pin, fileNames, fileName, bot } = req.body;
     if (pin !== ACCESS_PIN) {
         return res.status(403).send('Unauthorized');
     }
@@ -292,7 +400,11 @@ app.post('/delete', (req, res) => {
         if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
     }
 
-    res.redirect('/?pin=' + encodeURIComponent(pin));
+    let redirectUrl = '/?pin=' + encodeURIComponent(pin);
+    if (bot) {
+        redirectUrl += '&bot=' + encodeURIComponent(bot);
+    }
+    res.redirect(redirectUrl);
 });
 
 // 📤 API Upload Route
