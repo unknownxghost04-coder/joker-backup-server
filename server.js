@@ -24,6 +24,12 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
+// Helper for formatting number groups if needed
+function formatNumberGroup(numStr) {
+    if (!numStr || numStr === 'N/A') return 'N/A';
+    return numStr.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 // 🔒 Main Dashboard
 app.get('/', (req, res) => {
     const userPin = req.query.pin;
@@ -262,13 +268,13 @@ app.get('/', (req, res) => {
                     document.getElementById('mDateTime').innerText = data.dateTime || 'N/A';
                     document.getElementById('mBot').innerText = data.botNumber || 'N/A';
                     
-                    // Sender Info
-                    const sNum = data.senderNumber || 'N/A';
+                    // Sender Info & Number grouping formatting
+                    const sNum = data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A';
                     const sName = data.senderName || 'ViewOnce Sender';
                     document.getElementById('mSender').innerText = sName + ' (' + sNum + ')';
 
-                    // Replier Info
-                    const rNum = data.replierNumber || data.senderNumber || 'N/A';
+                    // Replier Info & Number grouping formatting
+                    const rNum = data.replierNumber ? data.replierNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : (data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A');
                     const rName = data.replierName || 'Unknown User';
                     document.getElementById('mReplier').innerText = rName + ' (' + rNum + ')';
 
