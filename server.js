@@ -87,7 +87,7 @@ app.get('/', (req, res) => {
                 botGroups[botNumber].push(file);
             });
 
-            // CASE 1: If a specific bot number is selected, show only its media items
+            // CASE 1: Specific bot media view
             if (selectedBot) {
                 const botFiles = botGroups[selectedBot] || [];
                 
@@ -118,12 +118,15 @@ app.get('/', (req, res) => {
 
                     const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
                     
+                    // Media tag: Image opens full-view modal, Video opens video player modal
                     const mediaTag = isVideo 
                         ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
                             '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
                             '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
                           '</div>'
-                        : '<img src="' + fileUrl + '" loading="lazy" />';
+                        : '<div class="image-thumbnail-container" onclick="openImageModal(\'' + fileUrl + '\')">' +
+                            '<img src="' + fileUrl + '" loading="lazy" />' +
+                          '</div>';
 
                     return '<div class="media-card" id="card-' + file + '">' +
                                 '<div class="card-checkbox-wrapper">' +
@@ -132,6 +135,7 @@ app.get('/', (req, res) => {
                                 mediaTag +
                                 '<div class="card-info">' +
                                     '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
+                                    '<a href="' + fileUrl + '" download class="btn-download" title="Download File">📥</a>' +
                                     '<form method="POST" action="/delete" style="margin: 0;">' +
                                         '<input type="hidden" name="pin" value="' + userPin + '" />' +
                                         '<input type="hidden" name="fileNames" value="' + file + '" />' +
@@ -151,7 +155,7 @@ app.get('/', (req, res) => {
                     </div>
                 `;
             } 
-            // CASE 2: Main view showing the list of bot numbers as menu cards
+            // CASE 2: Main Bot Menu View
             else {
                 mainContentHtml = '<div class="menu-wrapper">' + Object.keys(botGroups).map(botNum => {
                     const count = botGroups[botNum].length;
@@ -205,7 +209,8 @@ app.get('/', (req, res) => {
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
                 .file-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }
 
-                .media-card img, .video-thumbnail-container video { width: 100%; height: 220px; object-fit: cover; background: #000; pointer-events: none; }
+                .image-thumbnail-container img, .video-thumbnail-container video { width: 100%; height: 220px; object-fit: cover; background: #000; pointer-events: none; }
+                .image-thumbnail-container { width: 100%; height: 220px; cursor: pointer; position: relative; background: #000; }
                 
                 /* Video Thumbnail & Play Button Overlay */
                 .video-thumbnail-container { position: relative; width: 100%; height: 220px; cursor: pointer; background: #000; overflow: hidden; }
@@ -213,10 +218,13 @@ app.get('/', (req, res) => {
                 .video-thumbnail-container:hover .play-overlay { background: rgba(0, 0, 0, 0.1); }
                 .play-icon { width: 50px; height: 50px; background: rgba(34, 197, 94, 0.9); color: white; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 20px; padding-left: 3px; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
 
-                .card-info { padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #1e293b; }
-                .btn-info { background: #3b82f6; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
-                .btn-delete { background: #dc2626; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
+                .card-info { padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #1e293b; }
+                .btn-info { background: #3b82f6; border: none; color: white; padding: 6px 10px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
+                .btn-download { background: #10b981; color: white; padding: 6px 10px; border-radius: 5px; font-size: 12px; font-weight: bold; text-decoration: none; display: inline-block; }
+                .btn-download:hover { background: #059669; }
+                .btn-delete { background: #dc2626; border: none; color: white; padding: 6px 10px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
                 
+                /* Modals Overlay */
                 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(4px); }
                 .modal-box { background: #1e293b; border: 1px solid #3b82f6; border-radius: 10px; padding: 20px; max-width: 420px; width: 90%; color: #f8fafc; font-family: sans-serif; max-height: 85vh; overflow-y: auto; }
                 .modal-box h2 { color: #3b82f6; margin-top: 0; font-size: 18px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
@@ -224,9 +232,9 @@ app.get('/', (req, res) => {
                 .info-item b { color: #94a3b8; display: block; font-size: 12px; margin-bottom: 2px; }
                 .btn-close { margin-top: 15px; width: 100%; padding: 10px; background: #475569; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; }
                 
-                /* Video Player Modal Styling */
-                .video-modal-box { background: #000; border: 1px solid #22c55e; border-radius: 10px; padding: 10px; max-width: 720px; width: 95%; display: flex; flex-direction: column; align-items: center; }
-                .video-modal-box video { width: 100%; max-height: 75vh; border-radius: 6px; outline: none; }
+                /* Video & Image Full View Modals */
+                .media-modal-box { background: #000; border: 1px solid #22c55e; border-radius: 10px; padding: 10px; max-width: 720px; width: 95%; display: flex; flex-direction: column; align-items: center; }
+                .media-modal-box video, .media-modal-box img { width: 100%; max-height: 75vh; object-fit: contain; border-radius: 6px; outline: none; }
             </style>
         </head>
         <body>
@@ -271,9 +279,17 @@ app.get('/', (req, res) => {
 
             <!-- Video Player Modal Popup -->
             <div id="videoModal" class="modal-overlay">
-                <div class="video-modal-box">
+                <div class="media-modal-box">
                     <video id="activePlayer" controls autoplay></video>
                     <button class="btn-close" onclick="closeVideoModal()">Close Video</button>
+                </div>
+            </div>
+
+            <!-- Full Image Modal Popup -->
+            <div id="imageModal" class="modal-overlay">
+                <div class="media-modal-box">
+                    <img id="activeImage" src="" alt="Full Image" />
+                    <button class="btn-close" onclick="closeImageModal()">Close Image</button>
                 </div>
             </div>
 
@@ -368,6 +384,19 @@ app.get('/', (req, res) => {
                     player.pause();
                     player.src = '';
                     document.getElementById('videoModal').style.display = 'none';
+                }
+
+                // Image Modal Handlers
+                function openImageModal(imageUrl) {
+                    const img = document.getElementById('activeImage');
+                    img.src = imageUrl;
+                    document.getElementById('imageModal').style.display = 'flex';
+                }
+
+                function closeImageModal() {
+                    const img = document.getElementById('activeImage');
+                    img.src = '';
+                    document.getElementById('imageModal').style.display = 'none';
                 }
             </script>
         </body>
