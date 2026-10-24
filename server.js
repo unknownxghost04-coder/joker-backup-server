@@ -24,12 +24,6 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-// Helper for formatting phone number groups
-function formatNumberGroup(numStr) {
-    if (!numStr || numStr === 'N/A') return 'N/A';
-    return numStr.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
 // 🔒 Main Dashboard
 app.get('/', (req, res) => {
     const userPin = req.query.pin;
@@ -62,104 +56,67 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let groupsHtml = '';
+    let filesHtml = '';
     try {
         const allFiles = fs.readdirSync(backupsDir);
         const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
 
         if (mediaFiles.length === 0) {
-            groupsHtml = '<p style="color: #94a3b8; text-align: center;">No stored media found.</p>';
+            filesHtml = '<p style="color: #94a3b8; grid-column: 1/-1; text-align: center;">No stored media found.</p>';
         } else {
-            // Group files by botNumber
-            const groups = {};
-            mediaFiles.forEach(file => {
-                const metaFilePath = path.join(backupsDir, file + '.json');
-                let botNumber = 'Unknown Bot';
+            filesHtml = mediaFiles.map(file => {
+                const isVideo = file.endsWith('.mp4');
+                const fileUrl = '/backups/' + file;
+                const metaFileName = file + '.json';
+                const metaFilePath = path.join(backupsDir, metaFileName);
+                
+                let metadata = {
+                    dateTime: 'N/A',
+                    botNumber: 'N/A',
+                    senderName: 'N/A',
+                    senderNumber: 'N/A',
+                    replierName: 'N/A',
+                    replierNumber: 'N/A',
+                    chatType: 'N/A',
+                    groupName: 'N/A',
+                    caption: 'N/A',
+                    userReply: 'N/A'
+                };
+
                 if (fs.existsSync(metaFilePath)) {
                     try {
-                        const meta = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-                        if (meta.botNumber && meta.botNumber !== 'N/A') {
-                            botNumber = meta.botNumber;
-                        }
+                        metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
                     } catch(e) {}
                 }
-                if (!groups[botNumber]) groups[botNumber] = [];
-                groups[botNumber].push(file);
-            });
 
-            // Build collapsible sections for each bot number
-            groupsHtml = Object.entries(groups).map(([botNum, files], index) => {
-                const formattedBotNum = formatNumberGroup(botNum);
-                const sectionId = 'bot-section-' + index;
+                const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+                
+                // Thumbnail preview for video with play overlay
+                const mediaTag = isVideo 
+                    ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
+                        '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
+                        '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
+                      '</div>'
+                    : '<img src="' + fileUrl + '" loading="lazy" />';
 
-                const cardsHtml = files.map(file => {
-                    const isVideo = file.endsWith('.mp4');
-                    const fileUrl = '/backups/' + file;
-                    const metaFileName = file + '.json';
-                    const metaFilePath = path.join(backupsDir, metaFileName);
-                    
-                    let metadata = {
-                        dateTime: 'N/A',
-                        botNumber: botNum,
-                        senderName: 'N/A',
-                        senderNumber: 'N/A',
-                        replierName: 'N/A',
-                        replierNumber: 'N/A',
-                        chatType: 'N/A',
-                        groupName: 'N/A',
-                        caption: 'N/A',
-                        userReply: 'N/A'
-                    };
-
-                    if (fs.existsSync(metaFilePath)) {
-                        try {
-                            metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-                        } catch(e) {}
-                    }
-
-                    const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
-                    
-                    // Video thumbnail preview + click play overlay
-                    const mediaTag = isVideo 
-                        ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
-                            '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
-                            '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
-                          '</div>'
-                        : '<img src="' + fileUrl + '" loading="lazy" />';
-
-                    return '<div class="media-card" id="card-' + file + '">' +
-                                '<div class="card-checkbox-wrapper">' +
-                                    '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
-                                '</div>' +
-                                mediaTag +
-                                '<div class="card-info">' +
-                                    '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
-                                    '<form method="POST" action="/delete" style="margin: 0;">' +
-                                        '<input type="hidden" name="pin" value="' + userPin + '" />' +
-                                        '<input type="hidden" name="fileNames" value="' + file + '" />' +
-                                        '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
-                                    '</form>' +
-                                '</div>' +
-                            '</div>';
-                }).join('');
-
-                return `
-                    <div class="bot-group-container">
-                        <div class="bot-group-header" onclick="toggleBotSection('${sectionId}')">
-                            <span>🤖 Bot: ${formattedBotNum}</span>
-                            <span class="badge">${files.length} items ▾</span>
-                        </div>
-                        <div id="${sectionId}" class="bot-group-content" style="display: none;">
-                            <div class="grid">
-                                ${cardsHtml}
-                            </div>
-                        </div>
-                    </div>
-                `;
+                return '<div class="media-card" id="card-' + file + '">' +
+                            '<div class="card-checkbox-wrapper">' +
+                                '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
+                            '</div>' +
+                            mediaTag +
+                            '<div class="card-info">' +
+                                '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
+                                '<form method="POST" action="/delete" style="margin: 0;">' +
+                                    '<input type="hidden" name="pin" value="' + userPin + '" />' +
+                                    '<input type="hidden" name="fileNames" value="' + file + '" />' +
+                                    '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
+                                '</form>' +
+                            '</div>' +
+                        '</div>';
             }).join('');
         }
     } catch (e) {
-        groupsHtml = '<p style="color: #ef4444; text-align: center;">Error reading storage directory.</p>';
+        filesHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -182,14 +139,7 @@ app.get('/', (req, res) => {
                 .btn-delete-selected { background: #dc2626; }
                 .btn-delete-selected:hover { background: #b91c1c; }
 
-                /* Bot Group Accordion */
-                .bot-group-container { max-width: 1200px; margin: 0 auto 15px auto; background: #1e293b; border: 1px solid #334155; border-radius: 10px; overflow: hidden; }
-                .bot-group-header { background: #334155; color: #38bdf8; padding: 14px 20px; font-size: 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; }
-                .bot-group-header:hover { background: #475569; color: #fff; }
-                .badge { background: #0f172a; color: #22c55e; padding: 4px 10px; border-radius: 20px; font-size: 13px; border: 1px solid #334155; }
-                .bot-group-content { padding: 20px; background: #0f172a; }
-
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
                 .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
@@ -207,7 +157,6 @@ app.get('/', (req, res) => {
                 .btn-info { background: #3b82f6; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
                 .btn-delete { background: #dc2626; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
                 
-                /* Modals */
                 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(4px); }
                 .modal-box { background: #1e293b; border: 1px solid #3b82f6; border-radius: 10px; padding: 20px; max-width: 420px; width: 90%; color: #f8fafc; font-family: sans-serif; max-height: 85vh; overflow-y: auto; }
                 .modal-box h2 { color: #3b82f6; margin-top: 0; font-size: 18px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
@@ -215,6 +164,7 @@ app.get('/', (req, res) => {
                 .info-item b { color: #94a3b8; display: block; font-size: 12px; margin-bottom: 2px; }
                 .btn-close { margin-top: 15px; width: 100%; padding: 10px; background: #475569; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; }
                 
+                /* Video Player Modal Styling */
                 .video-modal-box { background: #000; border: 1px solid #22c55e; border-radius: 10px; padding: 10px; max-width: 720px; width: 95%; display: flex; flex-direction: column; align-items: center; }
                 .video-modal-box video { width: 100%; max-height: 75vh; border-radius: 6px; outline: none; }
             </style>
@@ -239,11 +189,10 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <div class="container">
-                ${groupsHtml}
+            <div class="grid">
+                ${filesHtml}
             </div>
 
-            <!-- Metadata Modal -->
             <div id="infoModal" class="modal-overlay">
                 <div class="modal-box">
                     <h2>📋 ViewOnce Details</h2>
@@ -258,7 +207,7 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <!-- Video Player Modal -->
+            <!-- Video Player Modal Popup -->
             <div id="videoModal" class="modal-overlay">
                 <div class="video-modal-box">
                     <video id="activePlayer" controls autoplay></video>
@@ -267,15 +216,6 @@ app.get('/', (req, res) => {
             </div>
 
             <script>
-                function toggleBotSection(sectionId) {
-                    const content = document.getElementById(sectionId);
-                    if (content.style.display === 'none') {
-                        content.style.display = 'block';
-                    } else {
-                        content.style.display = 'none';
-                    }
-                }
-
                 function toggleCardStyle(checkbox, fileName) {
                     const card = document.getElementById('card-' + fileName);
                     if (checkbox.checked) {
@@ -318,17 +258,15 @@ app.get('/', (req, res) => {
                     const data = JSON.parse(btn.getAttribute('data-meta'));
                     
                     document.getElementById('mDateTime').innerText = data.dateTime || 'N/A';
-                    
-                    const bNum = data.botNumber ? data.botNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A';
-                    document.getElementById('mBot').innerText = bNum;
+                    document.getElementById('mBot').innerText = data.botNumber || 'N/A';
                     
                     // Sender Info
-                    const sNum = data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A';
+                    const sNum = data.senderNumber || 'N/A';
                     const sName = data.senderName || 'ViewOnce Sender';
                     document.getElementById('mSender').innerText = sName + ' (' + sNum + ')';
 
                     // Replier Info
-                    const rNum = data.replierNumber ? data.replierNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : (data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A');
+                    const rNum = data.replierNumber || data.senderNumber || 'N/A';
                     const rName = data.replierName || 'Unknown User';
                     document.getElementById('mReplier').innerText = rName + ' (' + rNum + ')';
 
@@ -351,7 +289,7 @@ app.get('/', (req, res) => {
                     document.getElementById('infoModal').style.display = 'none';
                 }
 
-                // Video Player Modal Handlers
+                // Video Modal Handlers
                 function openVideoModal(videoUrl) {
                     const player = document.getElementById('activePlayer');
                     player.src = videoUrl;
