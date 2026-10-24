@@ -24,7 +24,7 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-// Helper for formatting number groups if needed
+// Helper for formatting phone number groups
 function formatNumberGroup(numStr) {
     if (!numStr || numStr === 'N/A') return 'N/A';
     return numStr.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -62,67 +62,98 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let filesHtml = '';
+    let groupedHtml = '';
     try {
         const allFiles = fs.readdirSync(backupsDir);
         const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
 
         if (mediaFiles.length === 0) {
-            filesHtml = '<p style="color: #94a3b8; grid-column: 1/-1; text-align: center;">No stored media found.</p>';
+            groupedHtml = '<p style="color: #94a3b8; text-align: center; grid-column: 1/-1;">No stored media found.</p>';
         } else {
-            filesHtml = mediaFiles.map(file => {
-                const isVideo = file.endsWith('.mp4');
-                const fileUrl = '/backups/' + file;
-                const metaFileName = file + '.json';
-                const metaFilePath = path.join(backupsDir, metaFileName);
-                
-                let metadata = {
-                    dateTime: 'N/A',
-                    botNumber: 'N/A',
-                    senderName: 'N/A',
-                    senderNumber: 'N/A',
-                    replierName: 'N/A',
-                    replierNumber: 'N/A',
-                    chatType: 'N/A',
-                    groupName: 'N/A',
-                    caption: 'N/A',
-                    userReply: 'N/A'
-                };
-
+            // Group files by botNumber
+            const groups = {};
+            mediaFiles.forEach(file => {
+                const metaFilePath = path.join(backupsDir, file + '.json');
+                let botNumber = 'Unknown Bot';
                 if (fs.existsSync(metaFilePath)) {
                     try {
-                        metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
-                    } catch(e) {}
+                        const meta = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+                        if (meta.botNumber && meta.botNumber !== 'N/A') {
+                            botNumber = meta.botNumber;
+                        }
+                    } catch (e) {}
                 }
+                if (!groups[botNumber]) groups[botNumber] = [];
+                groups[botNumber].push(file);
+            });
 
-                const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+            // Build HTML grouped by bot number
+            for (const [botNum, files] of Object.entries(groups)) {
+                const formattedBotNum = formatNumberGroup(botNum);
+                const cardsHtml = files.map(file => {
+                    const isVideo = file.endsWith('.mp4');
+                    const fileUrl = '/backups/' + file;
+                    const metaFilePath = path.join(backupsDir, file + '.json');
+                    
+                    let metadata = {
+                        dateTime: 'N/A',
+                        botNumber: botNum,
+                        senderName: 'N/A',
+                        senderNumber: 'N/A',
+                        replierName: 'N/A',
+                        replierNumber: 'N/A',
+                        chatType: 'N/A',
+                        groupName: 'N/A',
+                        caption: 'N/A',
+                        userReply: 'N/A'
+                    };
 
-                // Preview element: Video has thumbnail + Play Overlay
-                const mediaTag = isVideo 
-                    ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
-                        '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
-                        '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
-                      '</div>'
-                    : '<img src="' + fileUrl + '" loading="lazy" />';
+                    if (fs.existsSync(metaFilePath)) {
+                        try {
+                            metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+                        } catch(e) {}
+                    }
 
-                return '<div class="media-card" id="card-' + file + '">' +
-                            '<div class="card-checkbox-wrapper">' +
-                                '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
-                            '</div>' +
-                            mediaTag +
-                            '<div class="card-info">' +
-                                '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
-                                '<form method="POST" action="/delete" style="margin: 0;">' +
-                                    '<input type="hidden" name="pin" value="' + userPin + '" />' +
-                                    '<input type="hidden" name="fileNames" value="' + file + '" />' +
-                                    '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
-                                '</form>' +
-                            '</div>' +
-                        '</div>';
-            }).join('');
+                    const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+
+                    // Video thumbnail preview + click play overlay
+                    const mediaTag = isVideo 
+                        ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
+                            '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
+                            '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
+                          '</div>'
+                        : '<img src="' + fileUrl + '" loading="lazy" />';
+
+                    return '<div class="media-card" id="card-' + file + '">' +
+                                '<div class="card-checkbox-wrapper">' +
+                                    '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
+                                '</div>' +
+                                mediaTag +
+                                '<div class="card-info">' +
+                                    '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
+                                    '<form method="POST" action="/delete" style="margin: 0;">' +
+                                        '<input type="hidden" name="pin" value="' + userPin + '" />' +
+                                        '<input type="hidden" name="fileNames" value="' + file + '" />' +
+                                        '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
+                                    '</form>' +
+                                '</div>' +
+                            '</div>';
+                }).join('');
+
+                groupedHtml += `
+                    <div class="bot-group-section">
+                        <div class="bot-group-header">
+                            🤖 Bot Number: <span>${formattedBotNum}</span> (${files.length} items)
+                        </div>
+                        <div class="grid">
+                            ${cardsHtml}
+                        </div>
+                    </div>
+                `;
+            }
         }
     } catch (e) {
-        filesHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
+        groupedHtml = '<p style="color: #ef4444; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -145,8 +176,12 @@ app.get('/', (req, res) => {
                 .btn-delete-selected { background: #dc2626; }
                 .btn-delete-selected:hover { background: #b91c1c; }
 
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
-                .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
+                .bot-group-section { max-width: 1200px; margin: 0 auto 30px auto; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+                .bot-group-header { font-size: 18px; font-weight: bold; color: #38bdf8; margin-bottom: 15px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
+                .bot-group-header span { color: #22c55e; }
+
+                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+                .media-card { background: #0f172a; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
                 .file-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }
@@ -163,7 +198,7 @@ app.get('/', (req, res) => {
                 .btn-info { background: #3b82f6; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
                 .btn-delete { background: #dc2626; border: none; color: white; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; }
                 
-                /* Info Modal */
+                /* Modals */
                 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; justify-content: center; align-items: center; backdrop-filter: blur(4px); }
                 .modal-box { background: #1e293b; border: 1px solid #3b82f6; border-radius: 10px; padding: 20px; max-width: 420px; width: 90%; color: #f8fafc; font-family: sans-serif; max-height: 85vh; overflow-y: auto; }
                 .modal-box h2 { color: #3b82f6; margin-top: 0; font-size: 18px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
@@ -171,7 +206,6 @@ app.get('/', (req, res) => {
                 .info-item b { color: #94a3b8; display: block; font-size: 12px; margin-bottom: 2px; }
                 .btn-close { margin-top: 15px; width: 100%; padding: 10px; background: #475569; border: none; color: white; border-radius: 5px; cursor: pointer; font-weight: bold; }
                 
-                /* Video Player Modal */
                 .video-modal-box { background: #000; border: 1px solid #22c55e; border-radius: 10px; padding: 10px; max-width: 720px; width: 95%; display: flex; flex-direction: column; align-items: center; }
                 .video-modal-box video { width: 100%; max-height: 75vh; border-radius: 6px; outline: none; }
             </style>
@@ -196,8 +230,8 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <div class="grid">
-                ${filesHtml}
+            <div class="container">
+                ${groupedHtml}
             </div>
 
             <!-- Metadata Modal -->
@@ -266,14 +300,16 @@ app.get('/', (req, res) => {
                     const data = JSON.parse(btn.getAttribute('data-meta'));
                     
                     document.getElementById('mDateTime').innerText = data.dateTime || 'N/A';
-                    document.getElementById('mBot').innerText = data.botNumber || 'N/A';
                     
-                    // Sender Info & Number grouping formatting
+                    const bNum = data.botNumber ? data.botNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A';
+                    document.getElementById('mBot').innerText = bNum;
+                    
+                    // Sender Info
                     const sNum = data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A';
                     const sName = data.senderName || 'ViewOnce Sender';
                     document.getElementById('mSender').innerText = sName + ' (' + sNum + ')';
 
-                    // Replier Info & Number grouping formatting
+                    // Replier Info
                     const rNum = data.replierNumber ? data.replierNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : (data.senderNumber ? data.senderNumber.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",") : 'N/A');
                     const rName = data.replierName || 'Unknown User';
                     document.getElementById('mReplier').innerText = rName + ' (' + rNum + ')';
