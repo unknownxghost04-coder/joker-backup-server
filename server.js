@@ -62,13 +62,13 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let groupedHtml = '';
+    let groupsHtml = '';
     try {
         const allFiles = fs.readdirSync(backupsDir);
         const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
 
         if (mediaFiles.length === 0) {
-            groupedHtml = '<p style="color: #94a3b8; text-align: center; grid-column: 1/-1;">No stored media found.</p>';
+            groupsHtml = '<p style="color: #94a3b8; text-align: center;">No stored media found.</p>';
         } else {
             // Group files by botNumber
             const groups = {};
@@ -81,19 +81,22 @@ app.get('/', (req, res) => {
                         if (meta.botNumber && meta.botNumber !== 'N/A') {
                             botNumber = meta.botNumber;
                         }
-                    } catch (e) {}
+                    } catch(e) {}
                 }
                 if (!groups[botNumber]) groups[botNumber] = [];
                 groups[botNumber].push(file);
             });
 
-            // Build HTML grouped by bot number
-            for (const [botNum, files] of Object.entries(groups)) {
+            // Build collapsible sections for each bot number
+            groupsHtml = Object.entries(groups).map(([botNum, files], index) => {
                 const formattedBotNum = formatNumberGroup(botNum);
+                const sectionId = 'bot-section-' + index;
+
                 const cardsHtml = files.map(file => {
                     const isVideo = file.endsWith('.mp4');
                     const fileUrl = '/backups/' + file;
-                    const metaFilePath = path.join(backupsDir, file + '.json');
+                    const metaFileName = file + '.json';
+                    const metaFilePath = path.join(backupsDir, metaFileName);
                     
                     let metadata = {
                         dateTime: 'N/A',
@@ -115,7 +118,7 @@ app.get('/', (req, res) => {
                     }
 
                     const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
-
+                    
                     // Video thumbnail preview + click play overlay
                     const mediaTag = isVideo 
                         ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
@@ -140,20 +143,23 @@ app.get('/', (req, res) => {
                             '</div>';
                 }).join('');
 
-                groupedHtml += `
-                    <div class="bot-group-section">
-                        <div class="bot-group-header">
-                            🤖 Bot Number: <span>${formattedBotNum}</span> (${files.length} items)
+                return `
+                    <div class="bot-group-container">
+                        <div class="bot-group-header" onclick="toggleBotSection('${sectionId}')">
+                            <span>🤖 Bot: ${formattedBotNum}</span>
+                            <span class="badge">${files.length} items ▾</span>
                         </div>
-                        <div class="grid">
-                            ${cardsHtml}
+                        <div id="${sectionId}" class="bot-group-content" style="display: none;">
+                            <div class="grid">
+                                ${cardsHtml}
+                            </div>
                         </div>
                     </div>
                 `;
-            }
+            }).join('');
         }
     } catch (e) {
-        groupedHtml = '<p style="color: #ef4444; text-align: center;">Error reading storage directory.</p>';
+        groupsHtml = '<p style="color: #ef4444; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -176,12 +182,15 @@ app.get('/', (req, res) => {
                 .btn-delete-selected { background: #dc2626; }
                 .btn-delete-selected:hover { background: #b91c1c; }
 
-                .bot-group-section { max-width: 1200px; margin: 0 auto 30px auto; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
-                .bot-group-header { font-size: 18px; font-weight: bold; color: #38bdf8; margin-bottom: 15px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
-                .bot-group-header span { color: #22c55e; }
+                /* Bot Group Accordion */
+                .bot-group-container { max-width: 1200px; margin: 0 auto 15px auto; background: #1e293b; border: 1px solid #334155; border-radius: 10px; overflow: hidden; }
+                .bot-group-header { background: #334155; color: #38bdf8; padding: 14px 20px; font-size: 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; }
+                .bot-group-header:hover { background: #475569; color: #fff; }
+                .badge { background: #0f172a; color: #22c55e; padding: 4px 10px; border-radius: 20px; font-size: 13px; border: 1px solid #334155; }
+                .bot-group-content { padding: 20px; background: #0f172a; }
 
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
-                .media-card { background: #0f172a; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+                .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
                 .file-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }
@@ -231,7 +240,7 @@ app.get('/', (req, res) => {
             </div>
 
             <div class="container">
-                ${groupedHtml}
+                ${groupsHtml}
             </div>
 
             <!-- Metadata Modal -->
@@ -258,6 +267,15 @@ app.get('/', (req, res) => {
             </div>
 
             <script>
+                function toggleBotSection(sectionId) {
+                    const content = document.getElementById(sectionId);
+                    if (content.style.display === 'none') {
+                        content.style.display = 'block';
+                    } else {
+                        content.style.display = 'none';
+                    }
+                }
+
                 function toggleCardStyle(checkbox, fileName) {
                     const card = document.getElementById('card-' + fileName);
                     if (checkbox.checked) {
