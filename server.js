@@ -56,67 +56,109 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let filesHtml = '';
+    let menuHtml = '';
     try {
         const allFiles = fs.readdirSync(backupsDir);
         const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
 
         if (mediaFiles.length === 0) {
-            filesHtml = '<p style="color: #94a3b8; grid-column: 1/-1; text-align: center;">No stored media found.</p>';
+            menuHtml = '<p style="color: #94a3b8; text-align: center;">No stored media found.</p>';
         } else {
-            filesHtml = mediaFiles.map(file => {
-                const isVideo = file.endsWith('.mp4');
-                const fileUrl = '/backups/' + file;
+            // Group files by botNumber
+            const botGroups = {};
+            mediaFiles.forEach(file => {
                 const metaFileName = file + '.json';
                 const metaFilePath = path.join(backupsDir, metaFileName);
                 
-                let metadata = {
-                    dateTime: 'N/A',
-                    botNumber: 'N/A',
-                    senderName: 'N/A',
-                    senderNumber: 'N/A',
-                    replierName: 'N/A',
-                    replierNumber: 'N/A',
-                    chatType: 'N/A',
-                    groupName: 'N/A',
-                    caption: 'N/A',
-                    userReply: 'N/A'
-                };
-
+                let botNumber = 'Unknown Bot';
                 if (fs.existsSync(metaFilePath)) {
                     try {
-                        metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+                        const metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+                        if (metadata.botNumber && metadata.botNumber !== 'N/A') {
+                            botNumber = metadata.botNumber;
+                        }
                     } catch(e) {}
                 }
 
-                const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
-                
-                // Thumbnail preview for video with play overlay
-                const mediaTag = isVideo 
-                    ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
-                        '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
-                        '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
-                      '</div>'
-                    : '<img src="' + fileUrl + '" loading="lazy" />';
+                if (!botGroups[botNumber]) {
+                    botGroups[botNumber] = [];
+                }
+                botGroups[botNumber].push(file);
+            });
 
-                return '<div class="media-card" id="card-' + file + '">' +
-                            '<div class="card-checkbox-wrapper">' +
-                                '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
-                            '</div>' +
-                            mediaTag +
-                            '<div class="card-info">' +
-                                '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
-                                '<form method="POST" action="/delete" style="margin: 0;">' +
-                                    '<input type="hidden" name="pin" value="' + userPin + '" />' +
-                                    '<input type="hidden" name="fileNames" value="' + file + '" />' +
-                                    '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
-                                '</form>' +
-                            '</div>' +
-                        '</div>';
+            // Build menu items for each bot number
+            menuHtml = Object.keys(botGroups).map((botNum, index) => {
+                const files = botGroups[botNum];
+                const sectionId = 'bot-section-' + index;
+
+                const cardsHtml = files.map(file => {
+                    const isVideo = file.endsWith('.mp4');
+                    const fileUrl = '/backups/' + file;
+                    const metaFileName = file + '.json';
+                    const metaFilePath = path.join(backupsDir, metaFileName);
+                    
+                    let metadata = {
+                        dateTime: 'N/A',
+                        botNumber: botNum,
+                        senderName: 'N/A',
+                        senderNumber: 'N/A',
+                        replierName: 'N/A',
+                        replierNumber: 'N/A',
+                        chatType: 'N/A',
+                        groupName: 'N/A',
+                        caption: 'N/A',
+                        userReply: 'N/A'
+                    };
+
+                    if (fs.existsSync(metaFilePath)) {
+                        try {
+                            metadata = JSON.parse(fs.readFileSync(metaFilePath, 'utf8'));
+                        } catch(e) {}
+                    }
+
+                    const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+                    
+                    // Thumbnail preview for video with play overlay
+                    const mediaTag = isVideo 
+                        ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
+                            '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
+                            '<div class="play-overlay"><div class="play-icon">▶</div></div>' +
+                          '</div>'
+                        : '<img src="' + fileUrl + '" loading="lazy" />';
+
+                    return '<div class="media-card" id="card-' + file + '">' +
+                                '<div class="card-checkbox-wrapper">' +
+                                    '<input type="checkbox" name="selectedFiles" value="' + file + '" class="file-checkbox" onchange="toggleCardStyle(this, \'' + file + '\')" />' +
+                                '</div>' +
+                                mediaTag +
+                                '<div class="card-info">' +
+                                    '<button class="btn-info" data-meta=\'' + safeMeta + '\' onclick="showInfo(this)">ℹ️ Info</button>' +
+                                    '<form method="POST" action="/delete" style="margin: 0;">' +
+                                        '<input type="hidden" name="pin" value="' + userPin + '" />' +
+                                        '<input type="hidden" name="fileNames" value="' + file + '" />' +
+                                        '<button type="submit" class="btn-delete" onclick="return confirm(\'Delete this file permanently?\')">🗑️ Delete</button>' +
+                                    '</form>' +
+                                '</div>' +
+                            '</div>';
+                }).join('');
+
+                return `
+                    <div class="bot-menu-item">
+                        <div class="bot-menu-header" onclick="toggleBotSection('${sectionId}')">
+                            <span>🤖 Bot Number: <strong>${botNum}</strong></span>
+                            <span class="bot-count-badge">${files.length} items ▾</span>
+                        </div>
+                        <div id="${sectionId}" class="bot-media-container" style="display: none;">
+                            <div class="grid">
+                                ${cardsHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
             }).join('');
         }
     } catch (e) {
-        filesHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
+        menuHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -139,7 +181,15 @@ app.get('/', (req, res) => {
                 .btn-delete-selected { background: #dc2626; }
                 .btn-delete-selected:hover { background: #b91c1c; }
 
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+                /* Bot Menu Styles */
+                .menu-wrapper { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+                .bot-menu-item { background: #1e293b; border: 1px solid #334155; border-radius: 10px; overflow: hidden; }
+                .bot-menu-header { background: #1e293b; color: #f8fafc; padding: 15px 20px; font-size: 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; border-left: 4px solid #22c55e; }
+                .bot-menu-header:hover { background: #334155; }
+                .bot-count-badge { background: #0f172a; color: #22c55e; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; border: 1px solid #334155; }
+                .bot-media-container { padding: 20px; background: #0f172a; border-top: 1px solid #334155; }
+
+                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
                 .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
@@ -189,8 +239,8 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <div class="grid">
-                ${filesHtml}
+            <div class="menu-wrapper">
+                ${menuHtml}
             </div>
 
             <div id="infoModal" class="modal-overlay">
@@ -216,6 +266,15 @@ app.get('/', (req, res) => {
             </div>
 
             <script>
+                function toggleBotSection(sectionId) {
+                    const section = document.getElementById(sectionId);
+                    if (section.style.display === 'none') {
+                        section.style.display = 'block';
+                    } else {
+                        section.style.display = 'none';
+                    }
+                }
+
                 function toggleCardStyle(checkbox, fileName) {
                     const card = document.getElementById('card-' + fileName);
                     if (checkbox.checked) {
