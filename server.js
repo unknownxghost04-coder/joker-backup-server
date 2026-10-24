@@ -24,9 +24,10 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-// 🔒 Main Dashboard
+// 🔒 Main Dashboard & Bot Sub-pages
 app.get('/', (req, res) => {
     const userPin = req.query.pin;
+    const selectedBot = req.query.bot;
 
     if (userPin !== ACCESS_PIN) {
         return res.send(`
@@ -56,13 +57,13 @@ app.get('/', (req, res) => {
         `);
     }
 
-    let menuHtml = '';
+    let mainContentHtml = '';
     try {
         const allFiles = fs.readdirSync(backupsDir);
         const mediaFiles = allFiles.filter(f => !f.endsWith('.json')).reverse();
 
         if (mediaFiles.length === 0) {
-            menuHtml = '<p style="color: #94a3b8; text-align: center;">No stored media found.</p>';
+            mainContentHtml = '<p style="color: #94a3b8; text-align: center; grid-column: 1/-1;">No stored media found.</p>';
         } else {
             // Group files by botNumber
             const botGroups = {};
@@ -86,12 +87,11 @@ app.get('/', (req, res) => {
                 botGroups[botNumber].push(file);
             });
 
-            // Build menu items for each bot number
-            menuHtml = Object.keys(botGroups).map((botNum, index) => {
-                const files = botGroups[botNum];
-                const sectionId = 'bot-section-' + index;
-
-                const cardsHtml = files.map(file => {
+            // CASE 1: If a specific bot number is selected, show only its media items
+            if (selectedBot) {
+                const botFiles = botGroups[selectedBot] || [];
+                
+                const cardsHtml = botFiles.map(file => {
                     const isVideo = file.endsWith('.mp4');
                     const fileUrl = '/backups/' + file;
                     const metaFileName = file + '.json';
@@ -99,7 +99,7 @@ app.get('/', (req, res) => {
                     
                     let metadata = {
                         dateTime: 'N/A',
-                        botNumber: botNum,
+                        botNumber: selectedBot,
                         senderName: 'N/A',
                         senderNumber: 'N/A',
                         replierName: 'N/A',
@@ -118,7 +118,6 @@ app.get('/', (req, res) => {
 
                     const safeMeta = JSON.stringify(metadata).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
                     
-                    // Thumbnail preview for video with play overlay
                     const mediaTag = isVideo 
                         ? '<div class="video-thumbnail-container" onclick="openVideoModal(\'' + fileUrl + '\')">' +
                             '<video src="' + fileUrl + '#t=0.5" preload="metadata"></video>' +
@@ -142,23 +141,33 @@ app.get('/', (req, res) => {
                             '</div>';
                 }).join('');
 
-                return `
-                    <div class="bot-menu-item">
-                        <div class="bot-menu-header" onclick="toggleBotSection('${sectionId}')">
-                            <span>🤖 Bot Number: <strong>${botNum}</strong></span>
-                            <span class="bot-count-badge">${files.length} items ▾</span>
-                        </div>
-                        <div id="${sectionId}" class="bot-media-container" style="display: none;">
-                            <div class="grid">
-                                ${cardsHtml}
-                            </div>
-                        </div>
+                mainContentHtml = `
+                    <div class="nav-back">
+                        <a href="/?pin=${encodeURIComponent(userPin)}" class="btn-tool">⬅️ Back to Bot List</a>
+                        <h2 style="color: #38bdf8; margin: 0;">Bot: ${selectedBot} (${botFiles.length} items)</h2>
+                    </div>
+                    <div class="grid">
+                        ${cardsHtml || '<p style="color: #94a3b8; grid-column: 1/-1; text-align: center;">No media found for this bot.</p>'}
                     </div>
                 `;
-            }).join('');
+            } 
+            // CASE 2: Main view showing the list of bot numbers as menu cards
+            else {
+                mainContentHtml = '<div class="menu-wrapper">' + Object.keys(botGroups).map(botNum => {
+                    const count = botGroups[botNum].length;
+                    return `
+                        <a href="/?pin=${encodeURIComponent(userPin)}&bot=${encodeURIComponent(botNum)}" class="bot-menu-item">
+                            <div class="bot-menu-content">
+                                <span>🤖 Bot Number: <strong>${botNum}</strong></span>
+                                <span class="bot-count-badge">${count} items ➔</span>
+                            </div>
+                        </a>
+                    `;
+                }).join('') + '</div>';
+            }
         }
     } catch (e) {
-        menuHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
+        mainContentHtml = '<p style="color: #ef4444; grid-column: 1/-1; text-align: center;">Error reading storage directory.</p>';
     }
 
     res.send(`
@@ -174,7 +183,7 @@ app.get('/', (req, res) => {
                 
                 .toolbar { max-width: 1200px; margin: 0 auto 20px auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; background: #1e293b; padding: 12px 20px; border-radius: 8px; border: 1px solid #334155; align-items: center; }
                 .toolbar-group { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-                .btn-tool { background: #334155; border: none; color: white; padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+                .btn-tool { background: #334155; border: none; color: white; padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; transition: background 0.2s; }
                 .btn-tool:hover { background: #475569; }
                 .btn-mark-all { background: #2563eb; }
                 .btn-mark-all:hover { background: #1d4ed8; }
@@ -183,13 +192,14 @@ app.get('/', (req, res) => {
 
                 /* Bot Menu Styles */
                 .menu-wrapper { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
-                .bot-menu-item { background: #1e293b; border: 1px solid #334155; border-radius: 10px; overflow: hidden; }
-                .bot-menu-header { background: #1e293b; color: #f8fafc; padding: 15px 20px; font-size: 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; border-left: 4px solid #22c55e; }
-                .bot-menu-header:hover { background: #334155; }
-                .bot-count-badge { background: #0f172a; color: #22c55e; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; border: 1px solid #334155; }
-                .bot-media-container { padding: 20px; background: #0f172a; border-top: 1px solid #334155; }
+                .bot-menu-item { background: #1e293b; border: 1px solid #334155; border-radius: 10px; overflow: hidden; text-decoration: none; display: block; transition: transform 0.1s, background 0.2s; border-left: 4px solid #22c55e; }
+                .bot-menu-item:hover { background: #334155; transform: translateY(-2px); }
+                .bot-menu-content { color: #f8fafc; padding: 18px 20px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
+                .bot-count-badge { background: #0f172a; color: #22c55e; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: bold; border: 1px solid #334155; }
+                
+                .nav-back { max-width: 1200px; margin: 0 auto 20px auto; display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 12px 20px; border-radius: 8px; border: 1px solid #334155; }
 
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
                 .media-card { background: #1e293b; border: 2px solid #334155; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; transition: border-color 0.2s; }
                 .media-card.marked { border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
                 .card-checkbox-wrapper { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(15, 23, 42, 0.7); padding: 5px; border-radius: 6px; backdrop-filter: blur(4px); }
@@ -225,6 +235,7 @@ app.get('/', (req, res) => {
                 <span style="color: #22c55e; font-size: 14px;">● ONLINE & SECURED</span>
             </div>
 
+            ${selectedBot ? `
             <div class="toolbar">
                 <div class="toolbar-group">
                     <button class="btn-tool btn-mark-all" onclick="markAll(true)">✅ Mark All</button>
@@ -238,9 +249,10 @@ app.get('/', (req, res) => {
                     </form>
                 </div>
             </div>
+            ` : ''}
 
-            <div class="menu-wrapper">
-                ${menuHtml}
+            <div class="container">
+                ${mainContentHtml}
             </div>
 
             <div id="infoModal" class="modal-overlay">
@@ -266,15 +278,6 @@ app.get('/', (req, res) => {
             </div>
 
             <script>
-                function toggleBotSection(sectionId) {
-                    const section = document.getElementById(sectionId);
-                    if (section.style.display === 'none') {
-                        section.style.display = 'block';
-                    } else {
-                        section.style.display = 'none';
-                    }
-                }
-
                 function toggleCardStyle(checkbox, fileName) {
                     const card = document.getElementById('card-' + fileName);
                     if (checkbox.checked) {
@@ -302,16 +305,20 @@ app.get('/', (req, res) => {
                 function updateBatchInput() {
                     const checked = document.querySelectorAll('.file-checkbox:checked');
                     const filenames = Array.from(checked).map(cb => cb.value);
-                    document.getElementById('batchFileNames').value = filenames.join(',');
+                    const batchInput = document.getElementById('batchFileNames');
+                    if(batchInput) batchInput.value = filenames.join(',');
                 }
 
-                document.getElementById('batchDeleteForm').addEventListener('submit', function(e) {
-                    const batchVal = document.getElementById('batchFileNames').value;
-                    if (!batchVal) {
-                        e.preventDefault();
-                        alert('Please select at least one media item to delete.');
-                    }
-                });
+                const batchForm = document.getElementById('batchDeleteForm');
+                if(batchForm) {
+                    batchForm.addEventListener('submit', function(e) {
+                        const batchVal = document.getElementById('batchFileNames').value;
+                        if (!batchVal) {
+                            e.preventDefault();
+                            alert('Please select at least one media item to delete.');
+                        }
+                    });
+                }
 
                 function showInfo(btn) {
                     const data = JSON.parse(btn.getAttribute('data-meta'));
